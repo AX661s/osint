@@ -1,0 +1,1060 @@
+import React, { useState, useEffect } from 'react';
+import { Settings, Users, LogOut, Database, ArrowLeft, Trash2, Shield, X, RefreshCw, TrendingUp, Activity, User as UserIcon, Crown, PencilLine, CheckCircle2, XCircle, Zap } from 'lucide-react';
+import { Button } from './ui/button';
+import { Card } from './ui/card';
+import { toast } from 'sonner';
+import {
+  LineChart, Line, BarChart, Bar, PieChart, Pie, Cell,
+  XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
+  AreaChart, Area
+} from 'recharts';
+
+export const AdminPage = ({ onBack, onLogout, username, sessionToken, userId }) => {
+  const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://localhost:8000/api';
+  
+  const [activeTab, setActiveTab] = useState('dashboard');
+  const [stats, setStats] = useState({
+    total_users: 0,
+    total_email_queries: 0,
+    total_phone_queries: 0,
+    active_sessions: 0,
+    database_size_mb: 0,
+    total_searches: 0,
+    total_api_calls: 0,
+  });
+  const [users, setUsers] = useState([]);
+  const [newUser, setNewUser] = useState({
+    username: '',
+    password: '',
+    email: '',
+    points: 0,
+    is_admin: false,
+  });
+  const [isLoadingStats, setIsLoadingStats] = useState(false);
+  const [isLoadingUsers, setIsLoadingUsers] = useState(false);
+  const [searchFilter, setSearchFilter] = useState('');
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(null);
+  const [editUser, setEditUser] = useState(null);
+  const [editValues, setEditValues] = useState({ is_admin: false, is_active: true });
+  const [currentPage, setCurrentPage] = useState(1);
+  const pageSize = 10;
+
+  useEffect(() => {
+    // 防止快速切换标签导致的DOM冲突
+    const timer = setTimeout(() => {
+      if (activeTab === 'dashboard') {
+        loadStats();
+      } else if (activeTab === 'users') {
+        loadUsers();
+      }
+    }, 100);
+    
+    return () => clearTimeout(timer);
+  }, [activeTab]);
+
+  const loadStats = async () => {
+    setIsLoadingStats(true);
+    try {
+      const response = await fetch(`${API_BASE_URL}/admin/stats?session_token=${sessionToken}`);
+      const data = await response.json();
+      if (data.success) {
+        setStats(data.data);
+      } else {
+        toast.error('加载统计数据失败');
+      }
+    } catch (error) {
+      console.error('Failed to load stats:', error);
+      toast.error('加载统计数据失败');
+    } finally {
+      setIsLoadingStats(false);
+    }
+  };
+
+  const loadUsers = async () => {
+    setIsLoadingUsers(true);
+    try {
+      const response = await fetch(`${API_BASE_URL}/admin/users?session_token=${sessionToken}`);
+      const data = await response.json();
+      if (data.success) {
+        // 确保每个用户都有唯一的ID
+        const usersWithUniqueIds = data.data.map((user, index) => ({
+          ...user,
+          _uniqueKey: `${user.id}-${user.username}-${index}`
+        }));
+        setUsers(usersWithUniqueIds);
+      } else {
+        toast.error('加载用户列表失败');
+      }
+    } catch (error) {
+      console.error('Failed to load users:', error);
+      toast.error('加载用户列表失败');
+    } finally {
+      setIsLoadingUsers(false);
+    }
+  };
+
+
+  const handleCreateUser = async (e) => {
+    e.preventDefault();
+    if (!newUser.username || !newUser.password) {
+      toast.error('请填写用户名和密码');
+      return;
+    }
+
+    try {
+      const response = await fetch(`${API_BASE_URL}/auth/create-user`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          username: newUser.username,
+          password: newUser.password,
+          email: newUser.email,
+          points: Number(newUser.points) || 0,
+          is_admin: newUser.is_admin,
+        }),
+      });
+
+      const data = await response.json();
+      if (data.success) {
+        toast.success('用户创建成功');
+        setNewUser({ username: '', password: '', email: '', points: 0, is_admin: false });
+        // 重新加载用户列表
+        loadUsers();
+      } else {
+        toast.error(data.message || '创建用户失败');
+      }
+    } catch (error) {
+      console.error('Create user error:', error);
+      toast.error('创建用户请求失败');
+    }
+  };
+
+  const handleUpdateUserPartial = async (targetUserId, payload) => {
+    try {
+      const response = await fetch(`${API_BASE_URL}/admin/users/${targetUserId}?session_token=${sessionToken}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+
+      const data = await response.json();
+      if (data.success) {
+        toast.success('用户信息已更新');
+        setEditUser(null);
+        loadUsers();
+      } else {
+        toast.error(data.message || '更新用户信息失败');
+      }
+    } catch (error) {
+      console.error('Update user error:', error);
+      toast.error('更新用户信息失败');
+    }
+  };
+
+  const handleRecharge = async (user) => {
+    const amountStr = window.prompt(`为用户 ${user.username} 充值积分：输入增加的积分数`, '10');
+    if (amountStr === null) return;
+    const amount = Number(amountStr);
+    if (!Number.isFinite(amount) || amount <= 0) {
+      toast.error('请输入有效的正整数积分');
+      return;
+    }
+    const newPoints = (Number(user.points) || 0) + amount;
+    await handleUpdateUserPartial(user.id, { points: newPoints });
+  };
+
+  const openEditModal = (user) => {
+    setEditUser(user);
+    setEditValues({ is_admin: !!user.is_admin, is_active: !!user.is_active });
+  };
+
+  const handleSaveEdit = async () => {
+    if (!editUser) return;
+    const payload = { is_admin: editValues.is_admin, is_active: editValues.is_active };
+    await handleUpdateUserPartial(editUser.id, payload);
+  };
+
+  const handleDeleteUser = async (targetUserId) => {
+    // 防止删除自己
+    if (targetUserId === userId) {
+      toast.error('无法删除自己的账户');
+      return;
+    }
+
+    try {
+      const response = await fetch(`${API_BASE_URL}/admin/users/${targetUserId}?session_token=${sessionToken}`, {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+      });
+
+      const data = await response.json();
+      if (data.success) {
+        toast.success('用户已删除');
+        setShowDeleteConfirm(null);
+        loadUsers();
+      } else {
+        toast.error(data.message || '删除用户失败');
+      }
+    } catch (error) {
+      console.error('Delete user error:', error);
+      toast.error('删除用户请求失败');
+    }
+  };
+
+  const handleToggleAdminStatus = async (targetUserId, currentStatus) => {
+    // 防止修改自己的管理员状态
+    if (targetUserId === userId) {
+      toast.error('无法修改自己的管理员权限');
+      return;
+    }
+
+    try {
+      const response = await fetch(`${API_BASE_URL}/admin/users/${targetUserId}?session_token=${sessionToken}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          is_admin: !currentStatus,
+        }),
+      });
+
+      const data = await response.json();
+      if (data.success) {
+        toast.success('用户权限已更新');
+        loadUsers();
+      } else {
+        toast.error(data.message || '更新用户权限失败');
+      }
+    } catch (error) {
+      console.error('Update user error:', error);
+      toast.error('更新用户权限失败');
+    }
+  };
+
+  const handleLogoutClick = () => {
+    if (window.confirm('确定要登出吗？')) {
+      onLogout();
+    }
+  };
+
+  // 数据可视化数据
+  const chartData = [
+    { name: '周一', queries: stats.total_email_queries * 0.15, users: 4 },
+    { name: '周二', queries: stats.total_email_queries * 0.2, users: 3 },
+    { name: '周三', queries: stats.total_email_queries * 0.25, users: 2 },
+    { name: '周四', queries: stats.total_email_queries * 0.18, users: 2.78 },
+    { name: '周五', queries: stats.total_email_queries * 0.22, users: 1.89 },
+    { name: '周六', queries: stats.total_email_queries * 0.1, users: 2.39 },
+    { name: '周日', queries: stats.total_email_queries * 0.05, users: 2.48 },
+  ];
+
+  const queryTypeData = [
+    { name: '邮箱查询', value: stats.total_email_queries },
+    { name: '电话查询', value: stats.total_phone_queries },
+  ];
+
+  const COLORS = ['#3b82f6', '#ef4444'];
+
+  const filteredUsers = users.filter(user =>
+    (user.username || '').toLowerCase().includes(searchFilter.toLowerCase()) ||
+    (user.email || '').toLowerCase().includes(searchFilter.toLowerCase())
+  );
+  const totalUsers = filteredUsers.length;
+  const totalPages = Math.max(1, Math.ceil(totalUsers / pageSize));
+  const startIndex = (currentPage - 1) * pageSize;
+  const endIndex = Math.min(startIndex + pageSize, totalUsers);
+  const paginatedUsers = filteredUsers.slice(startIndex, endIndex);
+
+  return (
+    <div className="min-h-screen bg-gradient-to-br from-background via-background to-background/95">
+      {/* Header */}
+      <div className="border-b border-border/50 bg-card/50 backdrop-blur-xl sticky top-0 z-40">
+        <div className="max-w-7xl mx-auto px-4 py-6 flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <div className="p-2 bg-primary/20 rounded-lg">
+              <Settings className="w-8 h-8 text-primary" />
+            </div>
+            <h1 className="text-3xl font-bold bg-gradient-to-r from-primary to-blue-400 bg-clip-text text-transparent">
+              管理面板
+            </h1>
+          </div>
+          <div className="flex items-center gap-4">
+            <span className="text-sm text-muted-foreground inline-flex items-center gap-2"><UserIcon className="w-4 h-4" /> {username}</span>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => onBack()}
+              className="gap-2"
+            >
+              <ArrowLeft className="w-4 h-4" />
+              返回
+            </Button>
+            <Button
+              variant="destructive"
+              size="sm"
+              onClick={handleLogoutClick}
+              className="gap-2"
+            >
+              <LogOut className="w-4 h-4" />
+              登出
+            </Button>
+          </div>
+        </div>
+      </div>
+
+      {/* Navigation Tabs */}
+      <div className="border-b border-border/50 bg-card/30 sticky top-16 z-30">
+        <div className="max-w-7xl mx-auto px-4">
+          <div className="flex gap-8">
+            {[
+              { id: 'dashboard', label: '仪表板', icon: Database },
+              { id: 'users', label: '用户管理', icon: Users },
+              { id: 'points', label: '积分管理', icon: Activity },
+              { id: 'apikeys', label: 'API密钥', icon: Shield },
+              { id: 'logs', label: '查询日志', icon: TrendingUp },
+              { id: 'settings', label: '系统设置', icon: Settings },
+            ].map((tab) => (
+              <button
+                key={tab.id}
+                onClick={() => setActiveTab(tab.id)}
+                className={`py-4 px-2 border-b-2 font-medium transition-all duration-300 ${
+                  activeTab === tab.id
+                    ? 'border-primary text-primary'
+                    : 'border-transparent text-muted-foreground hover:text-foreground'
+                }`}
+              >
+                <span className="inline-flex items-center gap-2"><tab.icon className="w-4 h-4" /> {tab.label}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      {/* Content */}
+      <div className="max-w-7xl mx-auto px-4 py-8">
+        {/* Dashboard Tab */}
+        {activeTab === 'dashboard' && (
+          <div className="space-y-6 animate-fade-in">
+            {/* Header with Refresh */}
+            <div className="flex justify-between items-center">
+              <div>
+                <h2 className="text-3xl font-bold">系统统计仪表板</h2>
+                <p className="text-sm text-muted-foreground mt-1">实时系统数据和分析</p>
+              </div>
+              {/* Pagination */}
+              <div className="flex items-center justify-between mt-4">
+                <p className="text-sm text-muted-foreground">
+                  显示 {totalUsers === 0 ? 0 : startIndex + 1} - {endIndex} / 共 {totalUsers} 条
+                </p>
+                <div className="flex gap-2">
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => setCurrentPage(Math.max(1, currentPage - 1))}
+                    disabled={currentPage === 1}
+                  >
+                    上一页
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => setCurrentPage(Math.min(totalPages, currentPage + 1))}
+                    disabled={currentPage >= totalPages}
+                  >
+                    下一页
+                  </Button>
+                </div>
+              </div>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={loadStats}
+                disabled={isLoadingStats}
+                className="gap-2"
+              >
+                <RefreshCw className={`w-4 h-4 ${isLoadingStats ? 'animate-spin' : ''}`} />
+                {isLoadingStats ? '刷新中...' : '刷新数据'}
+              </Button>
+            </div>
+
+            {/* KPI Cards */}
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+              {[
+                { 
+                  title: '总用户数', 
+                  value: stats.total_users, 
+                  icon: Users,
+                  color: 'from-blue-500 to-blue-600',
+                  trend: '+2.5%'
+                },
+                { 
+                  title: '邮箱查询', 
+                  value: stats.total_email_queries, 
+                  icon: Database,
+                  color: 'from-green-500 to-green-600',
+                  trend: '+12.3%'
+                },
+                { 
+                  title: '电话查询', 
+                  value: stats.total_phone_queries, 
+                  icon: TrendingUp,
+                  color: 'from-purple-500 to-purple-600',
+                  trend: '+8.1%'
+                },
+                { 
+                  title: '活跃会话', 
+                  value: stats.active_sessions, 
+                  icon: Activity,
+                  color: 'from-orange-500 to-orange-600',
+                  trend: '+4.2%'
+                },
+              ].map((stat, index) => {
+                const Icon = stat.icon;
+                return (
+                  <Card key={index} className="p-6 border-0 bg-gradient-to-br shadow-lg hover:shadow-xl transition-shadow">
+                    <div className={`absolute inset-0 bg-gradient-to-br ${stat.color} opacity-5 rounded-lg`}></div>
+                    <div className="relative">
+                      <div className="flex items-center justify-between mb-4">
+                        <p className="text-muted-foreground text-sm font-medium">{stat.title}</p>
+                        <Icon className={`w-6 h-6 text-primary/60`} />
+                      </div>
+                      <div className="flex items-end justify-between">
+                        <div>
+                          <p className="text-4xl font-bold">{stat.value.toLocaleString()}</p>
+                          <p className="text-xs text-green-500 mt-1">{stat.trend}</p>
+                        </div>
+                      </div>
+                    </div>
+                  </Card>
+                );
+              })}
+            </div>
+
+            {/* Charts */}
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+              {/* Query Trend Chart */}
+              <Card className="col-span-1 lg:col-span-2 p-6 border-0 shadow-lg">
+                <h3 className="text-lg font-semibold mb-4">查询趋势 (最近7天)</h3>
+                <ResponsiveContainer width="100%" height={300}>
+                  <AreaChart data={chartData}>
+                    <defs>
+                      <linearGradient id="colorQueries" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="5%" stopColor="#3b82f6" stopOpacity={0.8} />
+                        <stop offset="95%" stopColor="#3b82f6" stopOpacity={0} />
+                      </linearGradient>
+                    </defs>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
+                    <XAxis dataKey="name" stroke="#9ca3af" />
+                    <YAxis stroke="#9ca3af" />
+                    <Tooltip 
+                      contentStyle={{ backgroundColor: '#1f2937', border: '1px solid #374151' }}
+                      labelStyle={{ color: '#fff' }}
+                    />
+                    <Area
+                      type="monotone"
+                      dataKey="queries"
+                      stroke="#3b82f6"
+                      fillOpacity={1}
+                      fill="url(#colorQueries)"
+                      name="查询次数"
+                    />
+                  </AreaChart>
+                </ResponsiveContainer>
+              </Card>
+
+              {/* Query Type Distribution */}
+              <Card className="p-6 border-0 shadow-lg">
+                <h3 className="text-lg font-semibold mb-4">查询类型分布</h3>
+                <ResponsiveContainer width="100%" height={300}>
+                  <PieChart>
+                    <Pie
+                      data={queryTypeData}
+                      cx="50%"
+                      cy="50%"
+                      labelLine={false}
+                      label={({ name, value }) => `${name}: ${value}`}
+                      outerRadius={80}
+                      fill="#8884d8"
+                      dataKey="value"
+                    >
+                      {queryTypeData.map((entry, index) => (
+                        <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                      ))}
+                    </Pie>
+                    <Tooltip
+                      contentStyle={{ backgroundColor: '#1f2937', border: '1px solid #374151' }}
+                      labelStyle={{ color: '#fff' }}
+                    />
+                  </PieChart>
+                </ResponsiveContainer>
+              </Card>
+            </div>
+
+            {/* Additional Stats */}
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+              <Card className="p-6 border-0 shadow-lg">
+                <h3 className="text-sm font-medium text-muted-foreground mb-2">邮箱查询成功率</h3>
+                <div className="flex items-baseline gap-2">
+                  <span className="text-3xl font-bold">
+                    {stats.total_email_queries > 0 
+                      ? Math.round((stats.successful_email_queries / stats.total_email_queries) * 100)
+                      : 0}%
+                  </span>
+                  <span className="text-xs text-muted-foreground">
+                    {stats.successful_email_queries} / {stats.total_email_queries}
+                  </span>
+                </div>
+              </Card>
+
+              <Card className="p-6 border-0 shadow-lg">
+                <h3 className="text-sm font-medium text-muted-foreground mb-2">电话查询成功率</h3>
+                <div className="flex items-baseline gap-2">
+                  <span className="text-3xl font-bold">
+                    {stats.total_phone_queries > 0 
+                      ? Math.round((stats.successful_phone_queries / stats.total_phone_queries) * 100)
+                      : 0}%
+                  </span>
+                  <span className="text-xs text-muted-foreground">
+                    {stats.successful_phone_queries} / {stats.total_phone_queries}
+                  </span>
+                </div>
+              </Card>
+
+              <Card className="p-6 border-0 shadow-lg">
+                <h3 className="text-sm font-medium text-muted-foreground mb-2">数据库大小</h3>
+                <div className="flex items-baseline gap-2">
+                  <span className="text-3xl font-bold">{stats.database_size_mb}</span>
+                  <span className="text-sm text-muted-foreground">MB</span>
+                </div>
+              </Card>
+            </div>
+          </div>
+        )}
+
+        {/* Users Tab */}
+        {activeTab === 'users' && (
+          <div className="space-y-6 animate-fade-in">
+            <h2 className="text-3xl font-bold">用户管理</h2>
+
+            {/* Create New User */}
+            <Card className="p-6 border-0 shadow-lg">
+              <h3 className="text-lg font-semibold mb-6">➕ 添加用户</h3>
+              <form onSubmit={handleCreateUser} className="space-y-4">
+                <div className="grid grid-cols-1 md:grid-cols-6 gap-4">
+                  <div>
+                    <label className="text-sm font-medium block mb-2">用户名</label>
+                    <input
+                      type="text"
+                      placeholder="输入用户名"
+                      value={newUser.username}
+                      onChange={(e) => setNewUser({ ...newUser, username: e.target.value })}
+                      className="w-full px-3 py-2 bg-background/50 border border-border/50 rounded-lg focus:outline-none focus:border-primary/50 transition-colors"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-sm font-medium block mb-2">密码</label>
+                    <input
+                      type="text"
+                      placeholder="输入密码"
+                      value={newUser.password}
+                      onChange={(e) => setNewUser({ ...newUser, password: e.target.value })}
+                      className="w-full px-3 py-2 bg-background/50 border border-border/50 rounded-lg focus:outline-none focus:border-primary/50 transition-colors"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-sm font-medium block mb-2">邮箱</label>
+                    <input
+                      type="email"
+                      placeholder="输入邮箱"
+                      value={newUser.email}
+                      onChange={(e) => setNewUser({ ...newUser, email: e.target.value })}
+                      className="w-full px-3 py-2 bg-background/50 border border-border/50 rounded-lg focus:outline-none focus:border-primary/50 transition-colors"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-sm font-medium block mb-2">积分</label>
+                    <input
+                      type="number"
+                      min="0"
+                      placeholder="初始积分"
+                      value={newUser.points}
+                      onChange={(e) => setNewUser({ ...newUser, points: e.target.value })}
+                      className="w-full px-3 py-2 bg-background/50 border border-border/50 rounded-lg focus:outline-none focus:border-primary/50 transition-colors"
+                    />
+                  </div>
+                  <div className="flex items-end">
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={newUser.is_admin}
+                        onChange={(e) => setNewUser({ ...newUser, is_admin: e.target.checked })}
+                        className="w-4 h-4 rounded"
+                      />
+                      <span className="text-sm font-medium">管理员权限</span>
+                    </label>
+                  </div>
+                  <Button type="submit" className="h-10">
+                    添加用户
+                  </Button>
+                </div>
+              </form>
+            </Card>
+
+            {/* Users List */}
+            <Card className="p-6 border-0 shadow-lg">
+              <div className="flex justify-between items-center mb-6">
+                <div>
+                  <h3 className="text-lg font-semibold inline-flex items-center gap-2"><Users className="w-5 h-5" /> 用户列表</h3>
+                  <p className="text-sm text-muted-foreground mt-1">{filteredUsers.length} 个用户</p>
+                </div>
+                <div className="flex gap-3">
+                  <input
+                    type="text"
+                    placeholder="搜索用户名或邮箱..."
+                    value={searchFilter}
+                    onChange={(e) => setSearchFilter(e.target.value)}
+                    className="px-3 py-2 bg-background/50 border border-border/50 rounded-lg focus:outline-none focus:border-primary/50 transition-colors text-sm"
+                  />
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={loadUsers}
+                    disabled={isLoadingUsers}
+                    className="gap-2"
+                  >
+                    <RefreshCw className={`w-4 h-4 ${isLoadingUsers ? 'animate-spin' : ''}`} />
+                  </Button>
+                </div>
+              </div>
+
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead className="border-b border-border/50 bg-background/50">
+                    <tr>
+                      <th className="text-left py-3 px-4 font-semibold">ID</th>
+                      <th className="text-left py-3 px-4 font-semibold">用户名</th>
+                      <th className="text-left py-3 px-4 font-semibold">邮箱</th>
+                      <th className="text-left py-3 px-4 font-semibold">角色</th>
+                      <th className="text-left py-3 px-4 font-semibold">积分</th>
+                      <th className="text-left py-3 px-4 font-semibold">状态</th>
+                      <th className="text-left py-3 px-4 font-semibold">创建时间</th>
+                      <th className="text-left py-3 px-4 font-semibold">操作</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {filteredUsers.length === 0 ? (
+                      <tr>
+                        <td colSpan="8" className="py-8 px-4 text-center text-muted-foreground">
+                          {searchFilter ? '未找到匹配的用户' : '没有用户数据'}
+                        </td>
+                      </tr>
+                    ) : (
+                      paginatedUsers.map((user) => (
+                        <tr key={user._uniqueKey || `${user.id}-${user.username}`} className="border-b border-border/30 hover:bg-background/50 transition-colors">
+                          <td className="py-3 px-4 text-xs text-muted-foreground">{user.id}</td>
+                          <td className="py-3 px-4 font-medium">
+                            <span className="flex items-center gap-2">
+                              <div className="w-2 h-2 bg-green-500 rounded-full"></div>
+                              {user.username}
+                            </span>
+                          </td>
+                          <td className="py-3 px-4 text-xs">{user.email || '-'}</td>
+                          <td className="py-3 px-4">
+                            <span className={`px-3 py-1 rounded-full text-xs font-medium ${
+                              user.is_admin
+                                ? 'bg-primary/20 text-primary'
+                                : 'bg-muted text-muted-foreground'
+                            }`}>
+                              <span className="inline-flex items-center gap-1">
+                                {user.is_admin ? (
+                                  <>
+                                    <Crown className="w-4 h-4" /> 管理员
+                                  </>
+                                ) : (
+                                  <>
+                                    <PencilLine className="w-4 h-4" /> 用户
+                                  </>
+                                )}
+                              </span>
+                            </span>
+                          </td>
+                          <td className="py-3 px-4">{Number(user.points || 0)}</td>
+                          <td className="py-3 px-4">
+                            <span className={`px-3 py-1 rounded-full text-xs font-medium ${
+                              user.is_active
+                                ? 'bg-green-500/20 text-green-500'
+                                : 'bg-red-500/20 text-red-500'
+                            }`}>
+                              <span className="inline-flex items-center gap-1">
+                                {user.is_active ? (
+                                  <>
+                                    <CheckCircle2 className="w-4 h-4" /> 活跃
+                                  </>
+                                ) : (
+                                  <>
+                                    <XCircle className="w-4 h-4" /> 禁用
+                                  </>
+                                )}
+                              </span>
+                            </span>
+                          </td>
+                          <td className="py-3 px-4 text-xs text-muted-foreground">
+                            {new Date(user.created_at).toLocaleString('zh-CN')}
+                          </td>
+                          <td className="py-3 px-4">
+                            <div className="flex gap-2">
+                              <Button size="sm" variant="outline" onClick={() => handleRecharge(user)}>充值</Button>
+                              <Button size="sm" variant="outline" onClick={() => openEditModal(user)}>编辑</Button>
+                              {user.id !== userId && (
+                                <Button size="sm" variant="destructive" onClick={() => setShowDeleteConfirm(user.id)}>删除</Button>
+                              )}
+                            </div>
+                          </td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </Card>
+          </div>
+        )}
+
+        {/* Settings Tab */}
+        {activeTab === 'settings' && (
+          <div className="space-y-6 animate-fade-in">
+            <h2 className="text-3xl font-bold">系统设置</h2>
+
+            {/* Database Info */}
+            <Card className="p-6 border-0 shadow-lg">
+              <h3 className="text-lg font-semibold mb-6 inline-flex items-center gap-2"><Database className="w-5 h-5" /> 数据库信息</h3>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div className="space-y-4">
+                  <div className="flex justify-between py-3 border-b border-border/30">
+                    <span className="text-muted-foreground">数据库类型:</span>
+                    <span className="font-medium">SQLite 3</span>
+                  </div>
+                  <div className="flex justify-between py-3 border-b border-border/30">
+                    <span className="text-muted-foreground">文件位置:</span>
+                    <span className="font-medium text-sm font-mono">./osint_tracker.db</span>
+                  </div>
+                  <div className="flex justify-between py-3 border-b border-border/30">
+                    <span className="text-muted-foreground">数据库大小:</span>
+                    <span className="font-medium">{stats.database_size_mb} MB</span>
+                  </div>
+                  <div className="flex justify-between py-3">
+                    <span className="text-muted-foreground">备份状态:</span>
+                    <span className="font-medium text-green-500 inline-flex items-center gap-1"><CheckCircle2 className="w-4 h-4" /> 正常</span>
+                  </div>
+                </div>
+                <div className="space-y-4">
+                  <div className="flex justify-between py-3 border-b border-border/30">
+                    <span className="text-muted-foreground">活跃连接:</span>
+                    <span className="font-medium">{stats.active_sessions}</span>
+                  </div>
+                  <div className="flex justify-between py-3 border-b border-border/30">
+                    <span className="text-muted-foreground">缓存条目:</span>
+                    <span className="font-medium">{stats.cached_results}</span>
+                  </div>
+                  <div className="flex justify-between py-3 border-b border-border/30">
+                    <span className="text-muted-foreground">总查询数:</span>
+                    <span className="font-medium">{stats.total_searches}</span>
+                  </div>
+                  <div className="flex justify-between py-3">
+                    <span className="text-muted-foreground">API调用数:</span>
+                    <span className="font-medium">{stats.total_api_calls}</span>
+                  </div>
+                </div>
+              </div>
+            </Card>
+
+            {/* System Health */}
+            <Card className="p-6 border-0 shadow-lg">
+              <h3 className="text-lg font-semibold mb-6 inline-flex items-center gap-2"><Zap className="w-5 h-5" /> 系统健康状态</h3>
+              <div className="space-y-4">
+                <div className="flex items-center justify-between p-4 bg-background/50 rounded-lg">
+                  <div>
+                    <p className="font-medium">系统运行</p>
+                    <p className="text-xs text-muted-foreground">已连接并正常运行</p>
+                  </div>
+                  <div className="w-3 h-3 bg-green-500 rounded-full animate-pulse"></div>
+                </div>
+                <div className="flex items-center justify-between p-4 bg-background/50 rounded-lg">
+                  <div>
+                    <p className="font-medium">数据库连接</p>
+                    <p className="text-xs text-muted-foreground">SQLite 数据库已连接</p>
+                  </div>
+                  <div className="w-3 h-3 bg-green-500 rounded-full animate-pulse"></div>
+                </div>
+                <div className="flex items-center justify-between p-4 bg-background/50 rounded-lg">
+                  <div>
+                    <p className="font-medium">API 服务</p>
+                    <p className="text-xs text-muted-foreground">所有外部 API 可用</p>
+                  </div>
+                  <div className="w-3 h-3 bg-green-500 rounded-full animate-pulse"></div>
+                </div>
+              </div>
+            </Card>
+          </div>
+        )}
+
+        {/* Points Management Tab */}
+        {activeTab === 'points' && (
+          <div className="space-y-6 animate-fade-in">
+            <div className="flex justify-between items-center">
+              <div>
+                <h2 className="text-3xl font-bold">积分管理</h2>
+                <p className="text-sm text-muted-foreground mt-1">查询消耗、充值与积分统计</p>
+              </div>
+            </div>
+
+            {/* KPI Cards */}
+            {(() => {
+              const pointsStats = {
+                totalRecharge: 1057,
+                totalConsumption: 10753,
+                todayConsumption: 17,
+                totalRewards: 0,
+              };
+              return (
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+                  <Card className="p-6 border-0 shadow-lg">
+                    <p className="text-sm text-muted-foreground">累计充值</p>
+                    <div className="mt-2 text-3xl font-bold">{pointsStats.totalRecharge}</div>
+                    <p className="text-xs text-muted-foreground mt-1">管理员充值总额</p>
+                  </Card>
+                  <Card className="p-6 border-0 shadow-lg">
+                    <p className="text-sm text-muted-foreground">累计查询消耗</p>
+                    <div className="mt-2 text-3xl font-bold">{pointsStats.totalConsumption}</div>
+                    <p className="text-xs text-muted-foreground mt-1">用户查询消耗总额</p>
+                  </Card>
+                  <Card className="p-6 border-0 shadow-lg">
+                    <p className="text-sm text-muted-foreground">今日查询消耗</p>
+                    <div className="mt-2 text-3xl font-bold">{pointsStats.todayConsumption}</div>
+                    <p className="text-xs text-muted-foreground mt-1">今日用户查询消耗</p>
+                  </Card>
+                  <Card className="p-6 border-0 shadow-lg">
+                    <p className="text-sm text-muted-foreground">累计奖励</p>
+                    <div className="mt-2 text-3xl font-bold">{pointsStats.totalRewards}</div>
+                    <p className="text-xs text-muted-foreground mt-1">系统发放奖励总额</p>
+                  </Card>
+                </div>
+              );
+            })()}
+
+            {/* Points Transactions Table */}
+            {(() => {
+              const pointsTransactions = [
+                { time: '今天 10:21', user: '3Te008', delta: '+50', type: '充值', reason: '管理员充值', balance: 50, operator: 'admin' },
+                { time: '今天 09:58', user: '5Tdzf01', delta: '-1', type: '消费', reason: 'Phone search query: +13473553937', balance: 4, operator: 'system' },
+                { time: '今天 09:55', user: '5Tdzf01', delta: '-1', type: '消费', reason: 'Phone search query: +17033286973', balance: 5, operator: 'system' },
+                { time: '今天 09:50', user: '3Te004', delta: '-1', type: '消费', reason: 'Phone search query: +12157200184', balance: 36, operator: 'system' },
+                { time: '今天 09:45', user: '2TA0006', delta: '-1', type: '消费', reason: 'Phone search query: +18475304590', balance: 11, operator: 'system' },
+                { time: '今天 09:40', user: '3Tf007', delta: '-1', type: '消费', reason: 'Phone search query: +18564175690', balance: 45, operator: 'system' },
+                { time: '今天 09:36', user: '3Tf007', delta: '-1', type: '消费', reason: 'Phone search query: +13262055856', balance: 46, operator: 'system' },
+                { time: '今天 09:32', user: '3Tf007', delta: '-1', type: '消费', reason: 'Phone search query: +16152072328', balance: 47, operator: 'system' },
+                { time: '今天 09:28', user: '3Ta007', delta: '-1', type: '消费', reason: 'Phone search query: +18312643597', balance: 44, operator: 'system' },
+                { time: '今天 09:20', user: '5Tdjz01', delta: '-1', type: '消费', reason: 'Phone search query: +12542582731', balance: 54, operator: 'system' },
+              ];
+              return (
+                <Card className="p-6 border-0 shadow-lg">
+                  <div className="flex items-center justify-between mb-4">
+                    <h3 className="text-lg font-semibold">积分交易记录</h3>
+                    <p className="text-sm text-muted-foreground">最近 10 条</p>
+                  </div>
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-sm">
+                      <thead className="border-b border-border/50 bg-background/50">
+                        <tr>
+                          <th className="text-left py-3 px-4 font-semibold">时间</th>
+                          <th className="text-left py-3 px-4 font-semibold">用户</th>
+                          <th className="text-left py-3 px-4 font-semibold">变动</th>
+                          <th className="text-left py-3 px-4 font-semibold">类型</th>
+                          <th className="text-left py-3 px-4 font-semibold">原因</th>
+                          <th className="text-left py-3 px-4 font-semibold">余额</th>
+                          <th className="text-left py-3 px-4 font-semibold">操作人</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {pointsTransactions.length === 0 ? (
+                          <tr>
+                            <td colSpan="7" className="py-8 px-4 text-center text-muted-foreground">暂无交易记录</td>
+                          </tr>
+                        ) : (
+                          pointsTransactions.map((tx, idx) => (
+                            <tr key={idx} className="border-b border-border/30 hover:bg-background/50 transition-colors">
+                              <td className="py-3 px-4 text-xs text-muted-foreground">{tx.time}</td>
+                              <td className="py-3 px-4">{tx.user}</td>
+                              <td className={`py-3 px-4 font-medium ${tx.delta.startsWith('+') ? 'text-green-500' : 'text-red-500'}`}>{tx.delta}</td>
+                              <td className="py-3 px-4">{tx.type}</td>
+                              <td className="py-3 px-4 text-xs">{tx.reason}</td>
+                              <td className="py-3 px-4">{tx.balance}</td>
+                              <td className="py-3 px-4">{tx.operator}</td>
+                            </tr>
+                          ))
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                </Card>
+              );
+            })()}
+          </div>
+        )}
+
+        {/* API Keys Tab */}
+        {activeTab === 'apikeys' && (
+          <div className="space-y-6 animate-fade-in">
+            <h2 className="text-3xl font-bold">API密钥</h2>
+            <p className="text-sm text-muted-foreground">管理和查看系统使用的外部API密钥</p>
+
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+              <Card className="p-6 border-0 shadow-lg">
+                <p className="text-sm text-muted-foreground">活跃API密钥</p>
+                <div className="mt-2 text-3xl font-bold">181</div>
+              </Card>
+            </div>
+
+            <Card className="p-6 border-0 shadow-lg">
+              <h3 className="text-lg font-semibold mb-4">密钥列表（占位）</h3>
+              <div className="space-y-3">
+                {[
+                  { name: 'OSINT Industries', token: '74f8eefa...ae1c', status: '活跃' },
+                  { name: 'RapidAPI', token: 'b491571b...d653d', status: '活跃' },
+                  { name: 'IPQS', token: '1AiiTseg...RLJdK', status: '活跃' },
+                ].map((k, idx) => (
+                  <div key={idx} className="flex items-center justify-between p-4 bg-background/50 rounded-lg">
+                    <div>
+                      <p className="font-medium">{k.name}</p>
+                      <p className="text-xs text-muted-foreground">Token: {k.token}</p>
+                    </div>
+                    <span className="text-xs px-2 py-1 rounded bg-primary/10 text-primary">{k.status}</span>
+                  </div>
+                ))}
+              </div>
+            </Card>
+          </div>
+        )}
+
+        {/* Query Logs Tab */}
+        {activeTab === 'logs' && (
+          <div className="space-y-6 animate-fade-in">
+            <h2 className="text-3xl font-bold">查询日志</h2>
+            <p className="text-sm text-muted-foreground">系统最近活动</p>
+
+            <Card className="p-6 border-0 shadow-lg">
+              <h3 className="text-lg font-semibold mb-4">最近活动</h3>
+              <div className="space-y-3">
+                {[
+                  { time: '今天 10:21', action: 'admin 查询邮箱 test@example.com' },
+                  { time: '今天 09:58', action: 'user2 查询手机号 +1234567890' },
+                  { time: '昨天 19:12', action: 'admin 创建用户 newuser' },
+                  { time: '昨天 15:05', action: 'user3 删除查询缓存' },
+                ].map((log, idx) => (
+                  <div key={idx} className="flex items-center justify-between p-4 bg-background/50 rounded-lg">
+                    <p className="text-sm text-muted-foreground">{log.time}</p>
+                    <p className="font-medium">{log.action}</p>
+                  </div>
+                ))}
+              </div>
+            </Card>
+          </div>
+        )}
+      </div>
+
+      {/* Delete Confirmation Modal */}
+      {showDeleteConfirm !== null && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 backdrop-blur-sm">
+          <Card className="p-6 max-w-sm w-full mx-4 border-0 shadow-2xl">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-lg font-semibold">⚠️ 确认删除用户</h3>
+              <button
+                onClick={() => setShowDeleteConfirm(null)}
+                className="text-muted-foreground hover:text-foreground transition-colors"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <p className="text-sm text-muted-foreground mb-6">
+              确定要删除该用户吗？此操作无法撤销，用户的所有会话也将被终止。
+            </p>
+            <div className="flex gap-3">
+              <Button
+                variant="outline"
+                className="flex-1"
+                onClick={() => setShowDeleteConfirm(null)}
+              >
+                取消
+              </Button>
+              <Button
+                variant="destructive"
+                className="flex-1"
+                onClick={() => {
+                  handleDeleteUser(showDeleteConfirm);
+                }}
+              >
+                删除用户
+              </Button>
+            </div>
+          </Card>
+        </div>
+      )}
+
+      {/* Edit User Modal */}
+      {editUser !== null && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 backdrop-blur-sm">
+          <Card className="p-6 max-w-sm w-full mx-4 border-0 shadow-2xl">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-lg font-semibold">✏️ 编辑用户</h3>
+              <button
+                onClick={() => setEditUser(null)}
+                className="text-muted-foreground hover:text-foreground transition-colors"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <div className="space-y-4">
+              <div className="flex items-center justify-between p-3 bg-background/50 rounded-lg">
+                <span className="text-sm">管理员权限</span>
+                <label className="flex items-center gap-2">
+                  <input
+                    type="checkbox"
+                    checked={editValues.is_admin}
+                    onChange={(e) => setEditValues({ ...editValues, is_admin: e.target.checked })}
+                    className="w-4 h-4 rounded"
+                  />
+                </label>
+              </div>
+              <div className="flex items-center justify-between p-3 bg-background/50 rounded-lg">
+                <span className="text-sm">启用状态</span>
+                <label className="flex items-center gap-2">
+                  <input
+                    type="checkbox"
+                    checked={editValues.is_active}
+                    onChange={(e) => setEditValues({ ...editValues, is_active: e.target.checked })}
+                    className="w-4 h-4 rounded"
+                  />
+                </label>
+              </div>
+            </div>
+            <div className="flex gap-3 mt-6">
+              <Button variant="outline" className="flex-1" onClick={() => setEditUser(null)}>取消</Button>
+              <Button className="flex-1" onClick={handleSaveEdit}>保存</Button>
+            </div>
+          </Card>
+        </div>
+      )}
+
+      <style>{`
+        @keyframes fadeIn {
+          from { opacity: 0; transform: translateY(10px); }
+          to { opacity: 1; transform: translateY(0); }
+        }
+        .animate-fade-in {
+          animation: fadeIn 0.3s ease-out;
+        }
+      `}</style>
+    </div>
+  );
+};
+
+export default AdminPage;
