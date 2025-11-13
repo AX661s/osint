@@ -1,0 +1,8 @@
+﻿*.tar
+*.zip
+release/
+osint-app-latest.tar
+*.db
+__pycache__/
+node_modules/
+build/
